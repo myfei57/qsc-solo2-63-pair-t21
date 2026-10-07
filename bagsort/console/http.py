@@ -91,6 +91,16 @@ class Request:
     payload: dict[str, object] = field(default_factory=dict)
     items: tuple[object, ...] = ()
     params: dict[str, str] = field(default_factory=dict)
+    headers: dict[str, str] = field(default_factory=dict)
+
+    def caller_key(self) -> str:
+        """The caller supplied order number, from header or body."""
+
+        header = self.headers.get("idempotency-key", "").strip()
+        if header:
+            return header
+        body_value = self.payload.get("request_id")
+        return body_value.strip() if isinstance(body_value, str) else ""
 
     def str_field(self, name: str, default: str = "") -> str:
         value = self.payload.get(name, default)
@@ -201,4 +211,15 @@ def build_request(environ: dict[str, object], params: dict[str, str]) -> Request
         payload=payload,
         items=items,
         params=params,
+        headers=_headers(environ),
     )
+
+
+def _headers(environ: dict[str, object]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for name, value in environ.items():
+        if name.startswith("HTTP_") and isinstance(value, str):
+            headers[name[5:].lower().replace("_", "-")] = value
+    if isinstance(environ.get("CONTENT_TYPE"), str):
+        headers["content-type"] = str(environ["CONTENT_TYPE"])
+    return headers

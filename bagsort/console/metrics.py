@@ -12,6 +12,7 @@ class Metrics:
         self._seconds = 0.0
         self._by_path: dict[str, int] = {}
         self._by_status: dict[str, int] = {}
+        self._idempotent: dict[str, int] = {"executed": 0, "replayed": 0, "failed": 0}
 
     def observe(self, path: str, status: int, seconds: float) -> None:
         self._requests += 1
@@ -22,6 +23,9 @@ class Metrics:
         key = str(status)
         self._by_status[key] = self._by_status.get(key, 0) + 1
 
+    def observe_idempotent(self, verdict: str) -> None:
+        self._idempotent[verdict] = self._idempotent.get(verdict, 0) + 1
+
     def snapshot(self) -> dict[str, object]:
         average = (self._seconds / self._requests) if self._requests else 0.0
         return {
@@ -31,6 +35,7 @@ class Metrics:
             "average_seconds": round(average, 6),
             "by_path": dict(sorted(self._by_path.items())),
             "by_status": dict(sorted(self._by_status.items())),
+            "idempotent": dict(sorted(self._idempotent.items())),
         }
 
     def reset(self) -> None:

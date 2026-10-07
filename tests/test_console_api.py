@@ -143,7 +143,9 @@ def test_sort_and_inject_endpoints(server):
     assert status == 409
     status, record = call(server, "POST", "/api/sort/dispatch", {"bag_id": bag_id})
     assert (status, record["chute_id"]) == (201, "T1-CHA")
-    assert call(server, "POST", "/api/sort/dispatch", {"bag_id": bag_id})[0] == 409
+    # A resend replays the first 201 result instead of reporting a conflict.
+    replayed = call(server, "POST", "/api/sort/dispatch", {"bag_id": bag_id})
+    assert (replayed[0], replayed[1]) == (201, record)
     assert call(server, "POST", "/api/sort/retry", {"bag_id": bag_id})[1]["sorted"] is False
     assert call(server, "GET", "/api/sort/records")[1][0]["bag_id"] == bag_id
     assert call(server, "GET", f"/api/bags/{bag_id}/sort-count")[1]["count"] == 1
@@ -187,15 +189,20 @@ def test_quota_and_audit_endpoints(server):
     assert call(server, "POST", "/api/quota/release", {"flight_id": flight_id, "count": 2})[1]["remaining"] == 3
 
     call(server, "POST", "/api/bags/checkin", {"barcode": "5001", "flight_id": flight_id})
-    assert call(server, "GET", "/api/audit/count")[1]["count"] == 2
-    assert call(server, "GET", "/api/audit/summary")[1]["checkin"] == 1
-    assert call(server, "GET", "/api/audit/stages")[1]["checkin"] == 1
-    assert call(server, "GET", "/api/audit/last")[1]["kind"] == "checkin"
+    business_kinds = {"checkin", "sort", "diversion", "recheck", "flight_close",
+                      "chute_assign", "belt_switch", "remap"}
+    status, summary = call(server, "GET", "/api/audit/summary")
+    assert summary["checkin"] == 1
+    status, stages = call(server, "GET", "/api/audit/stages")
+    assert stages["checkin"] == 1
+    # Register/replay entries extend the chain but stay in their own kinds.
+    assert set(summary) - business_kinds == {"request_registered"}
+    assert call(server, "GET", "/api/audit/last")[1]["kind"] == "request_registered"
     assert call(server, "GET", "/api/audit/verify")[1]["intact"] is True
     assert call(server, "GET", "/api/audit/timeline")[1][0]["subject"] == "T1-5001"
     assert call(server, "GET", "/api/audit/out-of-order")[1]["count"] == 0
     assert call(server, "GET", "/api/audit/bag/T1-5001")[1][0]["kind"] == "checkin"
-    assert len(call(server, "GET", "/api/audit")[1]) == 2
+    assert call(server, "GET", "/api/idempotency/verify")[1]["intact"] is True
 
 
 def test_journal_and_export_endpoints(server):

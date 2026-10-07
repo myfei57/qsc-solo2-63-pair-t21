@@ -46,6 +46,10 @@ def route_table() -> list[Route]:
         Route("GET", "/api/events", "recent domain events", "handle_events"),
         Route("GET", "/api/events/{topic}", "subscribers registered for a topic", "handle_events_topic"),
         Route("POST", "/api/telemetry/reset", "reset event counters", "handle_telemetry_reset"),
+        Route("GET", "/api/idempotency/policy", "replay boundary policy", "handle_idempotency_policy"),
+        Route("GET", "/api/idempotency/requests", "idempotency request ledger", "handle_idempotency_requests"),
+        Route("GET", "/api/idempotency/requests/{index}", "one ledger row with every replay", "handle_idempotency_request"),
+        Route("GET", "/api/idempotency/verify", "cross check ledger, journal and audit", "handle_idempotency_verify"),
         # -- flights ------------------------------------------------------
         Route("GET", "/api/flights", "list flights", "handle_list_flights"),
         Route("POST", "/api/flights", "register a flight", "handle_register_flight"),

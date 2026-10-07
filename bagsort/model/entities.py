@@ -252,6 +252,97 @@ class Sequence:
 
 
 @dataclass(frozen=True)
+class SavedResponse:
+    """The exact response a first execution produced, so a replay can copy it."""
+
+    status: int
+    payload: Any = None
+    content_type: str = "application/json; charset=utf-8"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "payload": _clean(self.payload),
+            "content_type": self.content_type,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "SavedResponse":
+        return cls(
+            status=int(raw.get("status", 0)),
+            payload=_clean(raw.get("payload")),
+            content_type=str(raw.get("content_type", "application/json; charset=utf-8")),
+        )
+
+
+@dataclass(frozen=True)
+class RequestRecord:
+    """One idempotency ledger row: a registered write plus every replay of it.
+
+    ``replays`` carries one entry per duplicate arrival (ledger position and
+    audit sequence of that replay), which is what lets each replay be reviewed
+    individually instead of only as an aggregate count.
+    """
+
+    index: int
+    idempotency_key: str
+    method: str
+    path: str
+    fingerprint: str
+    source: str
+    status: str
+    response: SavedResponse
+    registered_at: str
+    first_sequence: int = 0
+    command_count: int = 0
+    register_audit_sequence: int = 0
+    events: tuple[str, ...] = ()
+    replays: tuple[dict[str, Any], ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "idempotency_key": self.idempotency_key,
+            "method": self.method,
+            "path": self.path,
+            "fingerprint": self.fingerprint,
+            "source": self.source,
+            "status": self.status,
+            "response": self.response.as_dict(),
+            "registered_at": self.registered_at,
+            "first_sequence": self.first_sequence,
+            "command_count": self.command_count,
+            "register_audit_sequence": self.register_audit_sequence,
+            "replay_count": len(self.replays),
+            "events": list(self.events),
+            "replays": [dict(item) for item in self.replays],
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "RequestRecord":
+        response = raw.get("response", {})
+        return cls(
+            index=int(raw.get("index", 0)),
+            idempotency_key=str(raw.get("idempotency_key", "")),
+            method=str(raw.get("method", "")),
+            path=str(raw.get("path", "")),
+            fingerprint=str(raw.get("fingerprint", "")),
+            source=str(raw.get("source", "")),
+            status=str(raw.get("status", "")),
+            response=SavedResponse.from_dict(response if isinstance(response, dict) else {}),
+            registered_at=str(raw.get("registered_at", "")),
+            first_sequence=int(raw.get("first_sequence", 0)),
+            command_count=int(raw.get("command_count", 0)),
+            register_audit_sequence=int(raw.get("register_audit_sequence", 0)),
+            events=tuple(str(item) for item in raw.get("events", ())),
+            replays=tuple(dict(item) for item in raw.get("replays", ())),
+        )
+
+    def replayed(self, entry: dict[str, Any]) -> "RequestRecord":
+        return replace(self, replays=self.replays + (dict(entry),))
+
+
+@dataclass(frozen=True)
 class AuditEntry:
     sequence: int
     kind: str

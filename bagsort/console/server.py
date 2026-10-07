@@ -15,13 +15,17 @@ from .http import (
     build_request,
     error_response,
 )
-from .middleware import guarded
+from .middleware import guarded, status_for
 from .routes import register_routes
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from bagsort.app import Plant
 
 StartResponse = Callable[[str, list[tuple[str, str]]], object]
+
+
+def _error_response(exc: Exception) -> Response:
+    return error_response(status_for(exc), str(exc))
 
 
 class Server:
@@ -32,6 +36,26 @@ class Server:
         self.router = Router()
         register_routes(self.router, handlers)
 
+    # -- dispatch ----------------------------------------------------------
+
+    def _dispatch(self, handler: Handler, request: Request) -> Response:
+        """Run a matched request, wrapping idempotent writes in the ledger."""
+
+        layer = self.plant.idempotency
+
+        def execute() -> Response:
+            return guarded(lambda: handler(self, request))
+
+        if not layer.eligible(request):
+            return execute()
+        try:
+            response, verdict = layer.serve(request, execute)
+        except Exception as exc:
+            self.plant.metrics.observe_idempotent("failed")
+            return _error_response(exc)
+        self.plant.metrics.observe_idempotent(verdict)
+        return response
+
     # -- in process entry point (tests, demo) ------------------------------
 
     def call(
@@ -40,6 +64,7 @@ class Server:
         path: str,
         payload: dict[str, object] | list[object] | None = None,
         query: dict[str, list[str]] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> Response:
         handler, params, exists = self.router.match(method, path)
         if handler is None:
@@ -58,8 +83,9 @@ class Server:
             payload=fields,
             items=items,
             params=params,
+            headers={key.lower(): value for key, value in (headers or {}).items()},
         )
-        return guarded(lambda: handler(self, request))
+        return self._dispatch(handler, request)
 
     # -- WSGI entry point --------------------------------------------------
 
@@ -78,7 +104,7 @@ class Server:
             except RequestError as exc:
                 response = error_response(exc.status, exc.message)
             else:
-                response = guarded(lambda: handler(self, request))
+                response = self._dispatch(handler, request)
         self.plant.metrics.observe(path, response.status, time.perf_counter() - started)
         status, headers = response.wsgi()
         start_response(status, headers)

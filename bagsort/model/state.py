@@ -16,6 +16,7 @@ from .entities import (
     ChuteAssignment,
     Flight,
     LoadRecord,
+    RequestRecord,
     Sequence,
     SortRecord,
     TransferCommand,
@@ -35,6 +36,7 @@ class State:
     transfer_commands: list[TransferCommand] = field(default_factory=list)
     load_records: list[LoadRecord] = field(default_factory=list)
     audit: list[AuditEntry] = field(default_factory=list)
+    requests: list[RequestRecord] = field(default_factory=list)
     quota_limits: dict[str, int] = field(default_factory=dict)
     counters: dict[str, int] = field(default_factory=dict)
     sequence: Sequence = field(default_factory=Sequence)
@@ -53,6 +55,7 @@ class State:
             transfer_commands=list(self.transfer_commands),
             load_records=list(self.load_records),
             audit=list(self.audit),
+            requests=list(self.requests),
             quota_limits=dict(self.quota_limits),
             counters=dict(self.counters),
             sequence=self.sequence,
@@ -74,6 +77,7 @@ class State:
             "transfer_commands": [command.as_dict() for command in self.transfer_commands],
             "load_records": [record.as_dict() for record in self.load_records],
             "audit": [entry.as_dict() for entry in self.audit],
+            "requests": [record.as_dict() for record in self.requests],
             "quota_limits": dict(sorted(self.quota_limits.items())),
             "counters": dict(sorted(self.counters.items())),
             "sequence": self.sequence.as_dict(),
@@ -124,6 +128,18 @@ def apply_entry(state: State, kind: str, payload: dict[str, Any]) -> None:
         state.load_records.append(LoadRecord.from_dict(payload["record"]))
     elif kind == "audit.append":
         state.audit.append(AuditEntry.from_dict(payload["entry"]))
+    elif kind == "request.register":
+        record = RequestRecord.from_dict(payload["record"])
+        state.requests.append(record)
+    elif kind == "request.replay":
+        index = int(payload["index"])
+        replay_entry = dict(payload["entry"])
+        for position, existing in enumerate(state.requests):
+            if existing.index == index:
+                state.requests[position] = existing.replayed(replay_entry)
+                break
+        else:  # pragma: no cover - registry always references a registered row
+            raise ValidationError(f"replay references unknown request index {index}")
     elif kind == "quota.set":
         state.quota_limits[str(payload["flight_id"])] = int(payload["limit"])
     elif kind == "quota.adjust":

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from bagsort.checkin.entries import Entry
+from bagsort.idempotency.policy import policy_document
 from bagsort.model.entities import Flight, Reading
 from bagsort.model.validate import validate_flight
 from bagsort.reporting import csv_export
 from bagsort.sequence.allocator import preview
 from bagsort.store.replay import replay
-from .http import Request, Response, csv_response, json_response, text_response
+from .http import Request, RequestError, Response, csv_response, json_response, text_response
 from .routes import route_table
 from .version import version_info
 
@@ -142,6 +143,46 @@ def handle_telemetry_reset(server, request: Request) -> Response:
     plant = _plant(server)
     plant.telemetry.reset()
     return json_response({"status": "reset"})
+
+
+# ---------------------------------------------------------------------------
+# idempotency ledger
+# ---------------------------------------------------------------------------
+
+
+def handle_idempotency_policy(server, request: Request) -> Response:
+    return json_response(policy_document())
+
+
+def handle_idempotency_requests(server, request: Request) -> Response:
+    plant = _plant(server)
+    rows = [record.as_dict() for record in plant.requests.records()]
+    return json_response(
+        {
+            "registered": len(rows),
+            "replayed": plant.requests.replay_count(),
+            "records": rows,
+        }
+    )
+
+
+def handle_idempotency_request(server, request: Request) -> Response:
+    registry = _plant(server).requests
+    index = _int_param(request, "index")
+    record = registry.get(index)
+    return json_response(record.as_dict())
+
+
+def _int_param(request: Request, name: str) -> int:
+    raw = request.param(name)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise RequestError(400, f"parameter {name} must be an integer") from None
+
+
+def handle_idempotency_verify(server, request: Request) -> Response:
+    return json_response(_plant(server).verify_idempotency())
 
 
 # ---------------------------------------------------------------------------

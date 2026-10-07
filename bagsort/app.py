@@ -38,6 +38,9 @@ from bagsort.chute.assigner import ChuteAssigner
 from bagsort.chute.history import AssignmentHistory
 from bagsort.console.metrics import Metrics
 from bagsort.console.telemetry import Telemetry
+from bagsort.idempotency.crosscheck import verify as verify_idempotency
+from bagsort.idempotency.layer import IdempotencyLayer
+from bagsort.idempotency.registry import RequestRegistry
 
 DEFAULT_TERMINAL = "T1"
 
@@ -68,6 +71,8 @@ class Plant:
     belt: Belt
     quota: QuotaBook
     audit: AuditChain
+    requests: RequestRegistry
+    idempotency: IdempotencyLayer
     report: PlantReport
 
     @property
@@ -107,6 +112,7 @@ class Plant:
         belt = Belt(store, clock, IdFactory("cmd"))
 
         audit = AuditChain(store, clock, handling_line())
+        request_registry = RequestRegistry(store)
         audit_subscriber = _AuditSubscriber(audit)
         for topic in (
             "bag.checked_in",
@@ -123,6 +129,7 @@ class Plant:
         report = PlantReport(
             store, book, chutes, belt, quota, audit, namespace, handling_line()
         )
+        idempotency = IdempotencyLayer(store, request_registry, audit, bus, clock)
         return cls(
             store=store,
             clock=clock,
@@ -146,6 +153,8 @@ class Plant:
             belt=belt,
             quota=quota,
             audit=audit,
+            requests=request_registry,
+            idempotency=idempotency,
             report=report,
         )
 
@@ -245,6 +254,11 @@ class Plant:
 
     def verify(self) -> bool:
         return self.audit.verify()
+
+    def verify_idempotency(self) -> dict:
+        return verify_idempotency(
+            self.requests, self.store.entries(), self.store.state().audit
+        )
 
 
 class _AuditSubscriber:
