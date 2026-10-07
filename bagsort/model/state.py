@@ -16,6 +16,8 @@ from .entities import (
     ChuteAssignment,
     Flight,
     LoadRecord,
+    RegisteredRequest,
+    RequestReplay,
     Sequence,
     SortRecord,
     TransferCommand,
@@ -37,6 +39,8 @@ class State:
     audit: list[AuditEntry] = field(default_factory=list)
     quota_limits: dict[str, int] = field(default_factory=dict)
     counters: dict[str, int] = field(default_factory=dict)
+    requests: dict[str, RegisteredRequest] = field(default_factory=dict)
+    request_replays: list[RequestReplay] = field(default_factory=list)
     sequence: Sequence = field(default_factory=Sequence)
     recheck_queue: list[str] = field(default_factory=list)
     belt_carousel: str = ""
@@ -55,6 +59,8 @@ class State:
             audit=list(self.audit),
             quota_limits=dict(self.quota_limits),
             counters=dict(self.counters),
+            requests=dict(self.requests),
+            request_replays=list(self.request_replays),
             sequence=self.sequence,
             recheck_queue=list(self.recheck_queue),
             belt_carousel=self.belt_carousel,
@@ -76,6 +82,8 @@ class State:
             "audit": [entry.as_dict() for entry in self.audit],
             "quota_limits": dict(sorted(self.quota_limits.items())),
             "counters": dict(sorted(self.counters.items())),
+            "requests": {key: value.as_dict() for key, value in sorted(self.requests.items())},
+            "request_replays": [replay.as_dict() for replay in self.request_replays],
             "sequence": self.sequence.as_dict(),
             "recheck_queue": list(self.recheck_queue),
             "belt": {
@@ -133,6 +141,15 @@ def apply_entry(state: State, kind: str, payload: dict[str, Any]) -> None:
     elif kind == "counter.add":
         name = str(payload["name"])
         state.counters[name] = state.counters.get(name, 0) + int(payload["delta"])
+    elif kind == "request.open":
+        registered = RegisteredRequest.from_dict(payload["request"])
+        state.requests[registered.key] = registered
+    elif kind == "request.replay":
+        replay = RequestReplay.from_dict(payload["replay"])
+        state.request_replays.append(replay)
+        registered = state.requests.get(replay.key)
+        if registered is not None:
+            state.requests[replay.key] = registered.evolved(replays=registered.replays + 1)
     elif kind == "recheck.enqueue":
         bag_id = str(payload["bag_id"])
         if bag_id not in state.recheck_queue:

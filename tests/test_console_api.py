@@ -143,7 +143,8 @@ def test_sort_and_inject_endpoints(server):
     assert status == 409
     status, record = call(server, "POST", "/api/sort/dispatch", {"bag_id": bag_id})
     assert (status, record["chute_id"]) == (201, "T1-CHA")
-    assert call(server, "POST", "/api/sort/dispatch", {"bag_id": bag_id})[0] == 409
+    # A resent request replays the first response instead of failing.
+    assert call(server, "POST", "/api/sort/dispatch", {"bag_id": bag_id}) == (201, record)
     assert call(server, "POST", "/api/sort/retry", {"bag_id": bag_id})[1]["sorted"] is False
     assert call(server, "GET", "/api/sort/records")[1][0]["bag_id"] == bag_id
     assert call(server, "GET", f"/api/bags/{bag_id}/sort-count")[1]["count"] == 1

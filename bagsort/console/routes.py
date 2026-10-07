@@ -135,6 +135,12 @@ def route_table() -> list[Route]:
         Route("GET", "/api/quota/{flight}", "read one allowance", "handle_quota_for"),
         Route("POST", "/api/quota/consume", "consume allowance", "handle_quota_consume"),
         Route("POST", "/api/quota/release", "release allowance", "handle_quota_release"),
+        # -- requests (idempotency) ----------------------------------------
+        Route("GET", "/api/requests", "registered write requests", "handle_requests"),
+        Route("GET", "/api/requests/policy", "idempotency key and replay boundary", "handle_request_policy"),
+        Route("GET", "/api/requests/replays", "every replayed arrival", "handle_request_replays"),
+        Route("GET", "/api/requests/consistency", "register journal and counters cross-check", "handle_request_consistency"),
+        Route("GET", "/api/requests/{key}", "one registered request", "handle_request_detail"),
         # -- audit --------------------------------------------------------
         Route("GET", "/api/audit", "list audit entries", "handle_audit"),
         Route("GET", "/api/audit/count", "audit entry count", "handle_audit_count"),

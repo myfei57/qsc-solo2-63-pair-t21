@@ -15,7 +15,7 @@ from .http import (
     build_request,
     error_response,
 )
-from .middleware import guarded
+from .idempotency import IdempotencyGuard
 from .routes import register_routes
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -31,6 +31,7 @@ class Server:
         self.plant = plant
         self.router = Router()
         register_routes(self.router, handlers)
+        self.idempotency = IdempotencyGuard(plant)
 
     # -- in process entry point (tests, demo) ------------------------------
 
@@ -59,7 +60,7 @@ class Server:
             items=items,
             params=params,
         )
-        return guarded(lambda: handler(self, request))
+        return self.idempotency.execute(request, lambda: handler(self, request))
 
     # -- WSGI entry point --------------------------------------------------
 
@@ -78,7 +79,7 @@ class Server:
             except RequestError as exc:
                 response = error_response(exc.status, exc.message)
             else:
-                response = guarded(lambda: handler(self, request))
+                response = self.idempotency.execute(request, lambda: handler(self, request))
         self.plant.metrics.observe(path, response.status, time.perf_counter() - started)
         status, headers = response.wsgi()
         start_response(status, headers)

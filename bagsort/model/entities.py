@@ -252,6 +252,84 @@ class Sequence:
 
 
 @dataclass(frozen=True)
+class RegisteredRequest:
+    """A write request the console executed once and may replay verbatim."""
+
+    key: str
+    fingerprint: str
+    method: str
+    path: str
+    status: int
+    content_type: str
+    body: str
+    caller_key: bool = False
+    replays: int = 0
+    at: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "fingerprint": self.fingerprint,
+            "method": self.method,
+            "path": self.path,
+            "status": self.status,
+            "content_type": self.content_type,
+            "body": self.body,
+            "caller_key": self.caller_key,
+            "replays": self.replays,
+            "at": self.at,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "RegisteredRequest":
+        return cls(
+            key=str(raw["key"]),
+            fingerprint=str(raw.get("fingerprint", "")),
+            method=str(raw.get("method", "")),
+            path=str(raw.get("path", "")),
+            status=int(raw.get("status", 0)),
+            content_type=str(raw.get("content_type", "")),
+            body=str(raw.get("body", "")),
+            caller_key=bool(raw.get("caller_key", False)),
+            replays=int(raw.get("replays", 0)),
+            at=str(raw.get("at", "")),
+        )
+
+    def evolved(self, **changes: Any) -> "RegisteredRequest":
+        return replace(self, **changes)
+
+
+@dataclass(frozen=True)
+class RequestReplay:
+    """One replayed arrival of a registered request, in arrival order."""
+
+    key: str
+    ordinal: int
+    method: str
+    path: str
+    at: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "key": self.key,
+            "ordinal": self.ordinal,
+            "method": self.method,
+            "path": self.path,
+            "at": self.at,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "RequestReplay":
+        return cls(
+            key=str(raw["key"]),
+            ordinal=int(raw.get("ordinal", 0)),
+            method=str(raw.get("method", "")),
+            path=str(raw.get("path", "")),
+            at=str(raw.get("at", "")),
+        )
+
+
+@dataclass(frozen=True)
 class AuditEntry:
     sequence: int
     kind: str

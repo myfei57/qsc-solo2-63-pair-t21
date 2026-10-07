@@ -21,7 +21,7 @@ from bagsort.flight.mapping import BagMapping
 from bagsort.flight.schedule import ScheduleBoard
 from bagsort.ids import IdFactory
 from bagsort.inject.injector import Injector
-from bagsort.model.entities import Bag, Flight, Reading, SortRecord
+from bagsort.model.entities import Bag, Flight, Reading, RegisteredRequest, RequestReplay, SortRecord
 from bagsort.model.errors import unknown_bag
 from bagsort.ns.chutes import ChuteRegistry
 from bagsort.ns.namespace import Namespace
@@ -29,6 +29,7 @@ from bagsort.ns.topology import handling_line
 from bagsort.quota.quota import QuotaBook
 from bagsort.recheck.queue import RecheckQueue
 from bagsort.reporting.report import PlantReport
+from bagsort.requests.ledger import RequestLedger
 from bagsort.sequence.verdict import VerdictTracker
 from bagsort.sorter.sorter import Sorter
 from bagsort.store.store import Store
@@ -69,6 +70,7 @@ class Plant:
     quota: QuotaBook
     audit: AuditChain
     report: PlantReport
+    requests: RequestLedger
 
     @property
     def topology(self):
@@ -105,6 +107,7 @@ class Plant:
         closer = FlightCloser(book)
         recheck = RecheckQueue(store, book, clock)
         belt = Belt(store, clock, IdFactory("cmd"))
+        requests = RequestLedger(store, clock)
 
         audit = AuditChain(store, clock, handling_line())
         audit_subscriber = _AuditSubscriber(audit)
@@ -117,6 +120,7 @@ class Plant:
             "chute.assigned",
             "belt.switched",
             "bag.remapped",
+            "request.replayed",
         ):
             bus.subscribe(topic, audit_subscriber)
 
@@ -147,6 +151,7 @@ class Plant:
             quota=quota,
             audit=audit,
             report=report,
+            requests=requests,
         )
 
     # -- operator operations ----------------------------------------------
@@ -243,6 +248,86 @@ class Plant:
     def set_quota(self, flight_id: str, limit: int) -> int:
         return self.quota.set_limit(flight_id, limit)
 
+    # -- idempotent requests ------------------------------------------------
+
+    def register_request(
+        self,
+        key: str,
+        fingerprint: str,
+        caller_key: bool,
+        method: str,
+        path: str,
+        status: int,
+        content_type: str,
+        body: str,
+    ) -> RegisteredRequest:
+        """File a write that just succeeded so a resend replays its response."""
+
+        return self.requests.register(
+            key, fingerprint, caller_key, method, path, status, content_type, body
+        )
+
+    def replay_request(self, key: str) -> RequestReplay:
+        """Record a replayed arrival and leave the audit and event traces."""
+
+        replay = self.requests.note_replay(key)
+        self.bus.publish(
+            "request.replayed",
+            request_key=key,
+            ordinal=replay.ordinal,
+            method=replay.method,
+            path=replay.path,
+        )
+        return replay
+
+    def request_consistency(self) -> dict[str, object]:
+        """Cross-check the request register against the journal and counters.
+
+        The register, the command log, the audit chain and the event counters
+        all saw the same requests; this is where their counts are reconciled.
+        ``consistent`` covers the durable sources, which survive a restart;
+        telemetry is process lifetime, so it is reconciled on its own leg.
+        """
+
+        kinds = self.store.kinds()
+        state = self.store.state()
+        telemetry = self.telemetry.snapshot()
+        audit_kinds = self.audit.by_kind()
+        replayed = self.requests.replay_count()
+        checks = {
+            "registered": {
+                "ledger": len(self.requests.requests()),
+                "journal": kinds.get("request.open", 0),
+            },
+            "replays": {
+                "ledger": replayed,
+                "journal": kinds.get("request.replay", 0),
+                "audit": audit_kinds.get("request_replay", 0),
+            },
+            "sorted": {
+                "records": len(state.sort_records),
+                "counter": state.counters.get("sorter.dispatched", 0),
+            },
+        }
+        aligned = {
+            name: len(set(values.values())) == 1 for name, values in checks.items()
+        }
+        telemetry_aligned = {
+            "replays": telemetry.get("request.replayed", 0) == replayed,
+            "sorted": telemetry.get("bag.sorted", 0) == len(state.sort_records),
+        }
+        return {
+            "consistent": all(aligned.values()),
+            "aligned": aligned,
+            "checks": checks,
+            "telemetry": {
+                "lifetime": "process",
+                "request.replayed": telemetry.get("request.replayed", 0),
+                "bag.sorted": telemetry.get("bag.sorted", 0),
+                "aligned": telemetry_aligned,
+            },
+        }
+
     def verify(self) -> bool:
         return self.audit.verify()
 
@@ -259,6 +344,7 @@ class _AuditSubscriber:
         "chute.assigned": ("chute_assign", "chute"),
         "belt.switched": ("belt_switch", "belt"),
         "bag.remapped": ("remap", "checkin"),
+        "request.replayed": ("request_replay", "audit"),
     }
 
     def __init__(self, audit: AuditChain) -> None:
@@ -273,6 +359,7 @@ class _AuditSubscriber:
             event.payload.get("bag_id")
             or event.payload.get("flight_id")
             or event.payload.get("carousel")
+            or event.payload.get("request_key")
             or ""
         )
         detail = {

@@ -6,6 +6,7 @@ from bagsort.checkin.entries import Entry
 from bagsort.model.entities import Flight, Reading
 from bagsort.model.validate import validate_flight
 from bagsort.reporting import csv_export
+from bagsort.requests.keys import policy
 from bagsort.sequence.allocator import preview
 from bagsort.store.replay import replay
 from .http import Request, Response, csv_response, json_response, text_response
@@ -705,6 +706,36 @@ def handle_audit_out_of_order(server, request: Request) -> Response:
 def handle_audit_for_bag(server, request: Request) -> Response:
     entries = _plant(server).audit.for_subject(request.param("bag"))
     return json_response([entry.as_dict() for entry in entries])
+
+
+# ---------------------------------------------------------------------------
+# requests (idempotency)
+# ---------------------------------------------------------------------------
+
+
+def handle_request_policy(server, request: Request) -> Response:
+    return json_response(policy())
+
+
+def handle_requests(server, request: Request) -> Response:
+    registered = _plant(server).requests.requests()
+    return json_response([entry.as_dict() for entry in registered])
+
+
+def handle_request_detail(server, request: Request) -> Response:
+    registered = _plant(server).requests.lookup(request.param("key"))
+    if registered is None:
+        return json_response({"error": "not found"}, status=404)
+    return json_response(registered.as_dict())
+
+
+def handle_request_replays(server, request: Request) -> Response:
+    replays = _plant(server).requests.replays()
+    return json_response([entry.as_dict() for entry in replays])
+
+
+def handle_request_consistency(server, request: Request) -> Response:
+    return json_response(_plant(server).request_consistency())
 
 
 # ---------------------------------------------------------------------------
